@@ -9,6 +9,7 @@ class Peer:
         self.client_socket = None
         self.clients = []
         self.running = True
+        self.lock = threading.Lock()  # Lock to ensure synchronization
 
     def start_server(self):
         """Function to start the server"""
@@ -17,11 +18,24 @@ class Peer:
         self.server_socket.listen(5)
         print(f"Server started on {self.ip}:{self.port}")
 
+        # Server input for messages
+        threading.Thread(target=self.server_input, daemon=True).start()
+
         while self.running:
             client_socket, addr = self.server_socket.accept()
             print(f"Connection from {addr}")
             self.clients.append(client_socket)
-            threading.Thread(target=self.handle_client, args=(client_socket,)).start()
+            threading.Thread(target=self.handle_client, args=(client_socket,), daemon=True).start()
+
+    def server_input(self):
+        """Function to handle server-side input (sending messages)"""
+        while self.running:
+            # Wait for server to input message
+            message = input("")
+            if message == "EXIT":
+                self.stop()
+                break
+            self.broadcast(message)
 
     def handle_client(self, client_socket):
         """Function to handle messages from clients"""
@@ -33,18 +47,25 @@ class Peer:
                     self.clients.remove(client_socket)
                     client_socket.close()
                     break
-                print(f"Received: {message}")
+                print(f"Client: {message}")
                 self.broadcast(message, client_socket)
         except Exception as e:
             print(f"Error: {e}")
-            self.clients.remove(client_socket)
-            client_socket.close()
+            if client_socket in self.clients:
+                self.clients.remove(client_socket)
+            try:
+                client_socket.close()
+            except:
+                pass  # In case the socket was already closed
 
-    def broadcast(self, message, sender_socket):
+    def broadcast(self, message, sender_socket=None):
         """Function to broadcast message to other clients"""
         for client in self.clients:
-            if client != sender_socket:
-                client.send(f"Message from a peer: {message}".encode())
+            if client != sender_socket:  # Don't send message back to the sender
+                try:
+                    client.send(f"Server: {message}".encode())
+                except Exception as e:
+                    print(f"Error broadcasting to a client: {e}")
 
     def connect_to_peer(self, peer_ip, peer_port):
         """Function to connect as client to another peer"""
@@ -53,8 +74,8 @@ class Peer:
             self.client_socket.connect((peer_ip, peer_port))
             print(f"Connected to peer {peer_ip}:{peer_port}")
 
-            threading.Thread(target=self.send_messages).start()
-            self.receive_messages()
+            threading.Thread(target=self.receive_messages, daemon=True).start()  # Listen for incoming messages
+            self.send_messages()
         except Exception as e:
             print(f"Connection failed: {e}")
 
@@ -87,9 +108,11 @@ class Peer:
 
 
 def start_as_server():
-    """Function to start server mode"""
-    peer = Peer("127.0.0.1", 5000)
-    threading.Thread(target=peer.start_server).start()
+    """Function to start server mode with dynamic IP and port"""
+    ip = input("Enter the IP address for the server (e.g., 127.0.0.1): ")
+    port = int(input("Enter the port number for the server (e.g., 5000): "))
+    peer = Peer(ip, port)
+    threading.Thread(target=peer.start_server, daemon=True).start()
     return peer
 
 
